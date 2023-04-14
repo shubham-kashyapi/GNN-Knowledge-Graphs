@@ -1,29 +1,31 @@
 import os
 import json
 import numpy as np
+import pickle as pkl
 from tqdm import tqdm
 
 import torch
 from torch import nn
-from Models import Encoder_Model, Decoder_Model
+from Models import Encoder_Model, Decoder_Model, Decoder_Model_EBV
 from utils import get_corrupted_triples, get_normalization_constant
 
 #################################################################
 # Set arguments (modify later to command line arguments)
 #################################################################
 data_path = './fb15k-237.json'
-embed_dim = 128
+embed_dim = 32
 basis_size = 2 # Basis size for relation matrices in encoder
 sample_factor = 1 # For sampling corrupted triples
 learning_rate = 1e-3
-num_epochs = 200
 use_cuda = False
 reg_param = 0.01 # for L2 regularization of the decoder
-save_num_epochs = 5 # save the model at multiples of these many epochs
-save_path = './Model_Checkpoints_Final/' # checkpoints during training
-saved_model_path = './Model_Checkpoints_Final/model_epoch_200.pth'
+save_num_epochs = 10 # save the model at multiples of these many epochs
+ebvecs_path = './EBV_Generation/eq_100_237.pkl'
+save_path = './Model_Checkpoints_EBV/' # checkpoints during training
+saved_model_path = './Model_Checkpoints_EBV/model_epoch_200.pth'
 load_saved_model = True
-start_epoch = 200
+start_epoch = 0
+num_epochs = 200
 ##########################################################
 # Setting the device for pytorch
 ##########################################################
@@ -76,7 +78,13 @@ def train_function(enc_model, dec_model, e_list_true, e_type_true, normc, e_list
 
 print('Setting up model and optimizer')
 enc_model = Encoder_Model(num_nodes, embed_dim, num_rel, basis_size)
-dec_model = Decoder_Model(embed_dim, num_rel)
+print('Done initializing encoder')
+# dec_model = Decoder_Model(embed_dim, num_rel) # Use this for DistMult decoder
+with open(ebvecs_path, 'rb') as file:
+    ebvecs_prefined = pkl.load(file)
+#dec_model = Decoder_Model_EBV(embed_dim, num_rel, ebvecs_predefined.size(1), ebvecs_predefined)
+print('Encoder parameters:', list(enc_model.parameters()))
+print('Decoder parameters:', list(dec_model.parameters()))
 optimizer = torch.optim.Adam(list(enc_model.parameters()) + list(dec_model.parameters()), lr = learning_rate)
 
 if load_saved_model:
@@ -97,7 +105,7 @@ for epoch in range(start_epoch+1, start_epoch+num_epochs+1):
     dec_model.train()
     optimizer.zero_grad()
     
-    loss, _ = train_function(enc_model, dec_model, e_list_true, e_type_true, normc,
+    loss, acc = train_function(enc_model, dec_model, e_list_true, e_type_true, normc,
                              edge_list_pred, edge_type_pred, train_labels, reg_param)
                              
     loss.backward()
@@ -111,7 +119,8 @@ for epoch in range(start_epoch+1, start_epoch+num_epochs+1):
                     'enc_model_state_dict': enc_model.state_dict(),
                     'dec_model_state_dict': dec_model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
-                    'loss': loss
+                    'loss': loss,
+                    'acc': acc
                    }, os.path.join(save_path, 'model_epoch_{}.pth'.format(epoch)))
         
         

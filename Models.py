@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from Encoder_Layers import RGCN_Layer
-from Decoder_Layers import DistMult_Layer
+from Decoder_Layers import DistMult_Layer, EBV_Layer
 
 class Encoder_Model(nn.Module):
     
@@ -47,7 +47,7 @@ class Decoder_Model(nn.Module):
     def forward(self, X_embed, edge_list_pred, edge_type_pred):
         '''
         Xfeat- (num_nodes, xdim) float tensor
-        edge_list_pred: (2, |E|) long tensor in format [source, target]. May include true / corrupted edges. Data
+        edge_list_pred: (2, |E|) long tensor in format [source, target]. May include true / corrupted edges.
         edge_type_pred: (1, |E|) long tensor. May include true / corrupted edges.
         
         Returns:
@@ -61,6 +61,41 @@ class Decoder_Model(nn.Module):
         Returns the l2 norm of the decoder parameters. Can be added as a regularization term to the cost function.
         '''
         return torch.sqrt(torch.sum(torch.square(self.decoder.R)))
+    
+
+class Decoder_Model_EBV(nn.Module):
+    
+    def __init__(self, embed_dim, num_rel, basis_dim, ebvecs):
+        ''' 
+        embed_dim: int (Embedding dimension of nodes)
+        num_rel: int (Number of relation types)
+        basis_dim: int (Dimension of Equiangular Basis Vectors)
+        ebvecs: (num_cls, eb_dim) float tensor: Pre-initialized Equiangular Basis Vectors
+        '''
+        super().__init__()
+        self.linear = nn.Linear(embed_dim, basis_dim, bias = False)
+        nn.init.xavier_uniform_(self.linear.weight)
+        self.ebvlayer = EBV_Layer(num_rel, basis_dim, ebvecs)
         
+    def forward(self, X_embed, edge_list_pred, edge_type_pred):
+        '''
+        Xfeat- (num_nodes, self.embed_dim) float tensor
+        edge_list_pred: (2, |E|) long tensor in format [source, target]. May include true / corrupted edges.
+        edge_type_pred: (1, |E|) long tensor. May include true / corrupted edges.
         
-        
+        Returns:
+        scores- (1, |E|) float tensor. Probability score for each edge after applying EBV layer. 
+        '''
+        X_trans = self.linear(X_embed) # Transforming the node embeddings to the space of relation embeddings
+        source_embed = torch.index_select(X_trans, 0, edge_list_pred[0, :])
+        target_embed = torch.index_select(X_trans, 0, edge_list_pred[1, :])
+        headtail_embed = source_embed-target_embed
+        scores = self.ebvlayer(headtail_embed).gather(1, edge_type_pred.view(-1, 1)).view(1, -1)
+        return scores  
+    
+    def get_l2_norm(self):
+        '''
+        Returns the l2 norm of the decoder parameters. Can be added as a regularization term to the cost function.
+        '''
+        return torch.sqrt(torch.sum(torch.square(self.linear.weight)))
+    

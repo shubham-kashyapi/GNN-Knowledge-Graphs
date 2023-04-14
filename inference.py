@@ -18,7 +18,7 @@ embed_dim = 128
 basis_size = 2 # Basis size for relation matrices in encoder
 sample_factor = 1 # For sampling corrupted triples
 use_cuda = False
-saved_model_path = './Model_Checkpoints_Final/model_epoch_150.pth'
+saved_model_path = './Model_Checkpoints_Final/model_epoch_200.pth'
 ##########################################################
 # Setting the device for pytorch
 ##########################################################
@@ -33,19 +33,22 @@ with open(data_path, 'r') as f:
     data_dict = json.loads(f.read())
 
 num_nodes, num_rel = len(data_dict['node_index']), len(data_dict['rels_index'])
-true_triples = torch.tensor(data_dict['train_triples'], device = torch_device).to(torch.long) # Used for training
+#train_triples = torch.tensor(data_dict['train_triples'], device = torch_device).to(torch.long) # Used for training
 test_triples = torch.tensor(data_dict['test_triples'], device = torch_device).to(torch.long) # Used for inference
-print('Number of true training triples: {}'.format(true_triples.size()))
-corrupt_triples = get_corrupted_triples(true_triples, num_nodes, sample_factor)
+######################################################
+# Using true and corrupted test triples
+######################################################
+print('Number of true test triples: {}'.format(test_triples.size()))
+corrupt_triples = get_corrupted_triples(test_triples, num_nodes, sample_factor)
 print('Number of corrupt training triples: {}'.format(corrupt_triples.size()))
-e_list_true = torch.cat((true_triples[:, 0].view(-1, 1), true_triples[:, 2].view(-1, 1)), 1).T
-e_type_true = true_triples[:, 1].view(1, -1)
+e_list_true = torch.cat((test_triples[:, 0].view(-1, 1), test_triples[:, 2].view(-1, 1)), 1).T
+e_type_true = test_triples[:, 1].view(1, -1)
 e_list_corrupt = torch.cat((corrupt_triples[:, 0].view(-1, 1), corrupt_triples[:, 2].view(-1, 1)), 1).T
 e_type_corrupt = corrupt_triples[:, 1].view(1, -1)
 edge_list_pred  = torch.cat((e_list_true, e_list_corrupt), 1) # Includes true and corrupted triples
 edge_type_pred = torch.cat((e_type_true, e_type_corrupt), 1)  # Includes true and corrupted triples
 # Includes labels (1 or 0 respectively) for true and corrupted triples
-train_labels = torch.cat((torch.ones(true_triples.size(0), dtype = torch.float), 
+test_labels = torch.cat((torch.ones(test_triples.size(0), dtype = torch.float), 
                           torch.zeros(corrupt_triples.size(0), dtype = torch.float)), 0) 
 normc = get_normalization_constant(e_list_true, e_type_true) # Normalization constant for each edge
 print('Completed preprocessing the data')
@@ -68,19 +71,20 @@ if use_cuda:
 enc_model.eval()
 dec_model.eval()
 with torch.no_grad():
-    X_embed = enc_model(e_list_true, e_type_true, normc) # Node embeddings using training data
-    link_pred_metrics = Link_Prediction_Metrics(X_embed, dec_model, test_triples)
-    metrics_to_compute = [('mean_rank', 0), ('mean_reciprocal_rank', 0), ('hits_at_k', 1), 
-                          ('hits_at_k', 3), ('hits_at_k', 5), ('hits_at_k', 10)]
-    leftq_rel_metrics,rightq_rel_metrics,left_overall_metrics,right_overall_metrics = link_pred_metrics.compute_metrics(metrics_to_compute) 
+    X_embeds = enc_model(e_list_true, e_type_true, normc) # Node embeddings using training data
+    triple_scores = dec_model(X_embeds, edge_list_pred, edge_type_pred)
+    pred = (triple_scores > 0.5).float()
+    pred_acc = torch.mean((pred == test_labels).float())
+#     link_pred_metrics = Link_Prediction_Metrics(X_embed, dec_model, true_triples)    
+#     metrics_to_compute = [('mean_rank', 0), ('mean_reciprocal_rank', 0), ('hits_at_k', 1), 
+#                           ('hits_at_k', 3), ('hits_at_k', 5), ('hits_at_k', 10)]
+#     leftq_rel_metrics,rightq_rel_metrics,left_overall_metrics,right_overall_metrics = link_pred_metrics.compute_metrics(metrics_to_compute) 
 
-results_dict = {'left_rel': leftq_rel_metrics, 'right_rel': rightq_rel_metrics,
-                'left_overall': left_overall_metrics, 'right_overall': right_overall_metrics}
+# results_dict = {'left_rel': leftq_rel_metrics, 'right_rel': rightq_rel_metrics,
+#                 'left_overall': left_overall_metrics, 'right_overall': right_overall_metrics}
 
-with open('./test_metrics_150.pkl', 'wb') as file:
-    pickle.dump(results_dict, file) 
-    
-    
-    
-    
+# with open('./train_metrics_200.pkl', 'wb') as file:
+#     pickle.dump(results_dict, file) 
+
+print("True / false triple prediction accuracy on test set = {}".format(pred_acc))
     
